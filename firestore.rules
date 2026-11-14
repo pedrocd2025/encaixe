@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Lista de acesso: config/access = { owners: ["voce@gmail.com"], editors: ["amigo@gmail.com"] }
+    function hasAccessDoc() {
+      return exists(/databases/$(database)/documents/config/access);
+    }
+    function access() {
+      return get(/databases/$(database)/documents/config/access).data;
+    }
+    function mail() {
+      return request.auth.token.email.lower();
+    }
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email != null;
+    }
+    function isOwner() {
+      return signedIn() && hasAccessDoc() && mail() in access().get('owners', []);
+    }
+    function isEditor() {
+      return isOwner() || (signedIn() && hasAccessDoc() && mail() in access().get('editors', []));
+    }
+
+    // Qualquer pessoa consulta; só editores gravam.
+    match /players/{id} {
+      allow read: if true;
+      allow write: if isEditor();
+    }
+    match /clubs/{id} {
+      allow read: if true;
+      allow write: if isEditor();
+    }
+
+    // Clubes pessoais: cada conta lê e grava só os seus.
+    match /users/{uid}/clubs/{id} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Cenários do montador de elenco: também só da própria conta.
+    match /users/{uid}/squads/{id} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Métricas criadas pelo dono: todos leem (o ranking precisa delas); só donos gravam.
+    match /config/metrics {
+      allow read: if true;
+      allow write: if isOwner();
+    }
+
+    // Lista de acesso: editores leem (o app usa isso para saber o papel); só donos alteram.
+    match /config/access {
+      allow read: if isEditor();
+      allow write: if isOwner();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
